@@ -628,33 +628,32 @@ func renderBatteryCard(batts []BatteryStatus, thermal ThermalStatus) cardData {
 			lines = append(lines, fmt.Sprintf("Health %s  %s", batteryProgressBar(float64(b.Capacity)), capacityText))
 		}
 
-		statusIcon := ""
+		if thermal.CurrentPower > 0 {
+			label := "Draw"
+			if thermal.PowerSource == "charging" {
+				label = "Charge"
+			}
+			lines = append(lines, fmt.Sprintf("%-6s %s  %6s",
+				label,
+				powerProgressBar(thermal.CurrentPower, thermal.AdapterPower),
+				formatWatts(thermal.CurrentPower),
+			))
+		}
+
 		statusStyle := subtleStyle
-		if statusLower == "charging" || statusLower == "charged" {
-			statusIcon = " ⚡"
+		if isPoweredByAC(statusLower) {
 			statusStyle = okStyle
 		} else if b.Percent < 20 {
 			statusStyle = dangerStyle
 		}
-		statusText := b.Status
-		if len(statusText) > 0 {
-			statusText = strings.ToUpper(statusText[:1]) + strings.ToLower(statusText[1:])
-		}
+		statusText := formatBatteryStatus(b.Status)
 		if b.TimeLeft != "" {
 			statusText += " · " + b.TimeLeft
 		}
-		// Add power info.
-		if statusLower == "charging" || statusLower == "charged" {
-			if thermal.SystemPower > 0 {
-				statusText += fmt.Sprintf(" · %.0fW", thermal.SystemPower)
-			} else if thermal.AdapterPower > 0 {
-				statusText += fmt.Sprintf(" · %.0fW Adapter", thermal.AdapterPower)
-			}
-		} else if thermal.BatteryPower > 0 {
-			// Only show battery power when discharging (positive value)
-			statusText += fmt.Sprintf(" · %.0fW", thermal.BatteryPower)
+		if thermal.AdapterPower > 0 && isPoweredByAC(statusLower) {
+			statusText += fmt.Sprintf(" · %.0fW adapter", thermal.AdapterPower)
 		}
-		lines = append(lines, statusStyle.Render(statusText+statusIcon))
+		lines = append(lines, statusStyle.Render(statusText))
 
 		healthParts := []string{}
 
@@ -700,6 +699,62 @@ func renderBatteryCard(batts []BatteryStatus, thermal ThermalStatus) cardData {
 	return cardData{icon: iconBattery, title: "Power", lines: lines}
 }
 
+func isPoweredByAC(statusLower string) bool {
+	return statusLower == "charging" ||
+		statusLower == "charged" ||
+		statusLower == "ac" ||
+		strings.Contains(statusLower, "ac attached")
+}
+
+func formatBatteryStatus(status string) string {
+	status = strings.TrimSpace(status)
+	if status == "" {
+		return "Unknown"
+	}
+	lower := strings.ToLower(status)
+	switch lower {
+	case "ac":
+		return "AC"
+	case "charged":
+		return "Charged"
+	case "charging":
+		return "Charging"
+	case "discharging":
+		return "Discharging"
+	}
+	return strings.ToUpper(status[:1]) + strings.ToLower(status[1:])
+}
+
+func formatWatts(watts float64) string {
+	if watts >= 100 {
+		return fmt.Sprintf("%.0fW", watts)
+	}
+	return fmt.Sprintf("%.1fW", watts)
+}
+
+func powerProgressBar(watts float64, adapterPower float64) string {
+	scale := 60.0
+	if adapterPower > scale {
+		scale = adapterPower
+	}
+	percent := 0.0
+	if scale > 0 {
+		percent = watts / scale * 100.0
+	}
+	return colorizePower(watts, plainProgressBar(percent))
+}
+
+func colorizePower(watts float64, input string) string {
+	switch {
+	case watts >= 80:
+		return dangerStyle.Render(input)
+	case watts >= 45:
+		return warnStyle.Render(input)
+	default:
+		return okStyle.Render(input)
+	}
+}
+
 func renderCard(data cardData, width int, height int) string {
 	if width <= 0 {
 		width = colWidth
@@ -733,6 +788,10 @@ func wrapToWidth(text string, width int) []string {
 }
 
 func progressBar(percent float64) string {
+	return colorizePercent(percent, plainProgressBar(percent))
+}
+
+func plainProgressBar(percent float64) string {
 	total := 16
 	if percent < 0 {
 		percent = 0
@@ -750,7 +809,7 @@ func progressBar(percent float64) string {
 			builder.WriteString("░")
 		}
 	}
-	return colorizePercent(percent, builder.String())
+	return builder.String()
 }
 
 func batteryProgressBar(percent float64) string {

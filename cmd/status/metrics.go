@@ -190,6 +190,8 @@ type ThermalStatus struct {
 	SystemPower  float64 `json:"system_power"`  // System power consumption in Watts
 	AdapterPower float64 `json:"adapter_power"` // AC adapter max power in Watts
 	BatteryPower float64 `json:"battery_power"` // Battery charge/discharge power in Watts (positive = discharging)
+	CurrentPower float64 `json:"current_power"` // Best available real-time power flow in Watts
+	PowerSource  string  `json:"power_source"`  // system, battery, or charging
 }
 
 type SensorReading struct {
@@ -220,6 +222,8 @@ type Collector struct {
 	lastNetAt    time.Time
 	rxHistoryBuf *RingBuffer
 	txHistoryBuf *RingBuffer
+	lastNetIPAt  time.Time
+	cachedNetIPs map[string]string
 	lastGPUAt    time.Time
 	cachedGPU    []GPUStatus
 	prevDiskIO   disk.IOCountersStat
@@ -231,13 +235,16 @@ type Collector struct {
 }
 
 func NewCollector(options ProcessWatchOptions) *Collector {
-	return &Collector{
+	c := &Collector{
 		prevNet:        make(map[string]net.IOCountersStat),
 		rxHistoryBuf:   NewRingBuffer(NetworkHistorySize),
 		txHistoryBuf:   NewRingBuffer(NetworkHistorySize),
+		cachedNetIPs:   make(map[string]string),
 		processWatch:   options.SnapshotConfig(),
 		processWatcher: NewProcessWatcher(options),
 	}
+	c.primeNetworkCounters(time.Now())
+	return c
 }
 
 func (c *Collector) Collect() (MetricsSnapshot, error) {
