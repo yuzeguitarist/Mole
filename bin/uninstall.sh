@@ -439,6 +439,77 @@ uninstall_should_skip_app_path() {
     return 1
 }
 
+uninstall_resolve_bundle_id() {
+    local app_path="$1"
+    local fallback_bundle_id="${2:-}"
+    local bundle_id=""
+    local plist="$app_path/Contents/Info.plist"
+
+    fallback_bundle_id="${fallback_bundle_id//|/-}"
+    fallback_bundle_id="${fallback_bundle_id//[$'\t\r\n']/}"
+
+    if [[ -f "$plist" ]]; then
+        bundle_id=$(plutil -extract CFBundleIdentifier raw "$plist" 2> /dev/null || echo "")
+        bundle_id="${bundle_id//|/-}"
+        bundle_id="${bundle_id//[$'\t\r\n']/}"
+    fi
+
+    if [[ -n "$bundle_id" && "$bundle_id" != "(null)" ]]; then
+        printf '%s\n' "$bundle_id"
+        return 0
+    fi
+
+    if [[ -n "$fallback_bundle_id" && "$fallback_bundle_id" != "(null)" ]]; then
+        printf '%s\n' "$fallback_bundle_id"
+        return 0
+    fi
+
+    printf '%s\n' "unknown"
+}
+
+uninstall_app_is_background_only() {
+    local app_path="$1"
+    local plist="$app_path/Contents/Info.plist"
+    [[ -f "$plist" ]] || return 1
+
+    local bg_only
+    bg_only=$(plutil -extract LSBackgroundOnly raw "$plist" 2> /dev/null || echo "")
+    case "$bg_only" in
+        1 | YES | yes | TRUE | true)
+            return 0
+            ;;
+    esac
+
+    return 1
+}
+
+uninstall_app_is_currently_eligible() {
+    local app_path="$1"
+    local bundle_id="${2:-}"
+
+    [[ -n "$app_path" && -e "$app_path" ]] || return 1
+
+    if [[ -n "$bundle_id" && "$bundle_id" != "unknown" ]] && should_protect_from_uninstall "$bundle_id"; then
+        return 1
+    fi
+
+    if uninstall_app_is_background_only "$app_path"; then
+        return 1
+    fi
+
+    return 0
+}
+
+uninstall_resolve_eligible_bundle_id() {
+    local app_path="$1"
+    local fallback_bundle_id="${2:-}"
+    local bundle_id
+
+    bundle_id=$(uninstall_resolve_bundle_id "$app_path" "$fallback_bundle_id")
+    uninstall_app_is_currently_eligible "$app_path" "$bundle_id" || return 1
+    printf '%s\n' "$bundle_id"
+}
+
 uninstall_app_inventory_fingerprint() {
     local app_dir app_path app_mtime pkg_app_path
 
@@ -498,10 +569,7 @@ scan_applications() {
 
         [[ -n "$cached_bundle_id" && -n "$cached_display_name" ]] || return 1
 
-        # The metadata cache only contains apps that previously passed the
-        # background-only and protection filters. Trust unchanged cached rows
-        # here so returning to the app list does not rebuild the full
-        # protection regex for every application.
+        cached_bundle_id=$(uninstall_resolve_eligible_bundle_id "$cached_app_path" "$cached_bundle_id") || return 1
 
         printf "%s|%s|%s|%s\n" "$cached_app_path" "$cached_display_name" "$cached_bundle_id" "$cached_app_mtime" >> "$scan_raw_file"
         return 0
@@ -658,27 +726,8 @@ scan_applications() {
 
         IFS='|' read -r app_path app_name app_mtime cached_bundle_id cached_display_name <<< "$app_data_tuple"
 
-        local bundle_id="${cached_bundle_id:-}"
-        if [[ -z "$bundle_id" ]]; then
-            bundle_id="unknown"
-            if [[ -f "$app_path/Contents/Info.plist" ]]; then
-                bundle_id=$(plutil -extract CFBundleIdentifier raw "$app_path/Contents/Info.plist" 2> /dev/null || echo "")
-                [[ -n "$bundle_id" ]] || bundle_id="unknown"
-            fi
-        fi
-
-        if should_protect_from_uninstall "$bundle_id"; then
-            return 0
-        fi
-
-        local plist="$app_path/Contents/Info.plist"
-        if [[ -f "$plist" ]]; then
-            local bg_only
-            bg_only=$(plutil -extract LSBackgroundOnly raw "$plist" 2> /dev/null || echo "")
-            if [[ "$bg_only" == "1" || "$bg_only" == "YES" || "$bg_only" == "true" ]]; then
-                return 0
-            fi
-        fi
+        local bundle_id
+        bundle_id=$(uninstall_resolve_eligible_bundle_id "$app_path" "${cached_bundle_id:-}") || return 0
 
         local display_name="${cached_display_name:-}"
         if [[ -z "$display_name" ]]; then
