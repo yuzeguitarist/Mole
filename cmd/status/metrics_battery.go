@@ -18,15 +18,6 @@ var (
 	lastPowerAt   time.Time
 	cachedPower   string
 	powerCacheTTL = 30 * time.Second
-
-	// Cache for optional powermetrics output. powermetrics is the only Apple
-	// built-in source that can expose AC-side SoC power draw, but it requires
-	// root. Use non-interactive sudo only and cache failures to keep status fast.
-	lastPowerDrawAt       time.Time
-	lastPowerDrawFailedAt time.Time
-	cachedPowerDraw       ThermalStatus
-	powerDrawCacheTTL     = 3 * time.Second
-	powerDrawFailureTTL   = 30 * time.Second
 )
 
 func collectBatteries() (batts []BatteryStatus, err error) {
@@ -210,65 +201,11 @@ func collectThermal() ThermalStatus {
 		thermal.SystemPower = powerThermal.SystemPower
 		thermal.AdapterPower = powerThermal.AdapterPower
 		thermal.BatteryPower = powerThermal.BatteryPower
-		thermal.CurrentPower = powerThermal.CurrentPower
-		thermal.PowerSource = powerThermal.PowerSource
-	}
-
-	if thermal.CurrentPower == 0 {
-		powerThermal := getCachedPowermetricsPower()
-		if powerThermal.CurrentPower > 0 {
-			thermal.SystemPower = powerThermal.SystemPower
-			thermal.CurrentPower = powerThermal.CurrentPower
-			thermal.PowerSource = powerThermal.PowerSource
-		}
 	}
 
 	// Do not synthesize CPU temperature from battery sensors or cpu_thermal_level.
 	// Those values are not CPU-package temperatures and produce false overheating data.
 	return thermal
-}
-
-func getCachedPowermetricsPower() ThermalStatus {
-	if runtime.GOOS != "darwin" || !commandExists("powermetrics") {
-		return ThermalStatus{}
-	}
-
-	now := time.Now()
-	if cachedPowerDraw.CurrentPower > 0 && now.Sub(lastPowerDrawAt) < powerDrawCacheTTL {
-		return cachedPowerDraw
-	}
-	if now.Sub(lastPowerDrawFailedAt) < powerDrawFailureTTL {
-		return ThermalStatus{}
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 900*time.Millisecond)
-	defer cancel()
-
-	args := []string{"-n", "1", "-i", "100", "-s", "cpu_power,gpu_power,ane_power,battery", "-a", "0"}
-	name := "powermetrics"
-	if os.Geteuid() != 0 {
-		if !commandExists("sudo") {
-			lastPowerDrawFailedAt = now
-			return ThermalStatus{}
-		}
-		// -n is critical: never block the TUI on a password prompt.
-		args = append([]string{"-n", "powermetrics"}, args...)
-		name = "sudo"
-	}
-
-	out, err := runCmd(ctx, name, args...)
-	if err != nil {
-		lastPowerDrawFailedAt = now
-		return ThermalStatus{}
-	}
-	thermal := parsePowermetricsPower(out)
-	if thermal.CurrentPower <= 0 {
-		lastPowerDrawFailedAt = now
-		return ThermalStatus{}
-	}
-	cachedPowerDraw = thermal
-	lastPowerDrawAt = now
-	return cachedPowerDraw
 }
 
 func parseAppleSmartBatteryThermal(out string) ThermalStatus {
@@ -333,73 +270,7 @@ func parseAppleSmartBatteryThermal(out string) ThermalStatus {
 			thermal.BatteryPower = batteryPowerW
 		}
 	}
-	finalizeCurrentPower(&thermal)
 	return thermal
-}
-
-func parsePowermetricsPower(out string) ThermalStatus {
-	var (
-		combinedPower float64
-		packagePower  float64
-		componentSum  float64
-	)
-
-	for line := range strings.Lines(out) {
-		lower := strings.ToLower(strings.TrimSpace(line))
-		if lower == "" || !strings.Contains(lower, "power") {
-			continue
-		}
-		watts, ok := parsePowerLineWatts(line)
-		if !ok || watts <= 0 || watts > 1000 {
-			continue
-		}
-
-		switch {
-		case strings.Contains(lower, "combined power"):
-			combinedPower = watts
-		case strings.Contains(lower, "package power"):
-			packagePower = watts
-		case strings.Contains(lower, "cpu power") ||
-			strings.Contains(lower, "gpu power") ||
-			strings.Contains(lower, "ane power"):
-			componentSum += watts
-		}
-	}
-
-	draw := combinedPower
-	if draw == 0 {
-		draw = packagePower
-	}
-	if draw == 0 {
-		draw = componentSum
-	}
-	if draw == 0 {
-		return ThermalStatus{}
-	}
-
-	return ThermalStatus{
-		SystemPower:  draw,
-		CurrentPower: draw,
-		PowerSource:  "powermetrics",
-	}
-}
-
-func parsePowerLineWatts(line string) (float64, bool) {
-	fields := strings.Fields(strings.ReplaceAll(line, ":", " "))
-	for i := 0; i < len(fields)-1; i++ {
-		value, err := strconv.ParseFloat(strings.Trim(fields[i], ","), 64)
-		if err != nil {
-			continue
-		}
-		unit := strings.ToLower(strings.Trim(fields[i+1], ",.;)"))
-		switch unit {
-		case "mw", "milliwatts", "milliwatt":
-			return value / 1000.0, true
-		case "w", "watts", "watt":
-			return value, true
-		}
-	}
-	return 0, false
 }
 
 func setSystemPowerMW(thermal *ThermalStatus, powerMW float64) {
@@ -413,20 +284,6 @@ func setBatteryPowerMW(thermal *ThermalStatus, powerMW float64) {
 	// Validate reasonable battery power range: -200W to 200W.
 	if powerMW > -200000 && powerMW < 200000 {
 		thermal.BatteryPower = powerMW / 1000.0
-	}
-}
-
-func finalizeCurrentPower(thermal *ThermalStatus) {
-	switch {
-	case thermal.SystemPower > 0:
-		thermal.CurrentPower = thermal.SystemPower
-		thermal.PowerSource = "system"
-	case thermal.BatteryPower > 0:
-		thermal.CurrentPower = thermal.BatteryPower
-		thermal.PowerSource = "battery"
-	case thermal.BatteryPower < 0:
-		thermal.CurrentPower = -thermal.BatteryPower
-		thermal.PowerSource = "charging"
 	}
 }
 

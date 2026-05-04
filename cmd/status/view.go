@@ -628,15 +628,11 @@ func renderBatteryCard(batts []BatteryStatus, thermal ThermalStatus) cardData {
 			lines = append(lines, fmt.Sprintf("Health %s  %s", batteryProgressBar(float64(b.Capacity)), capacityText))
 		}
 
-		if thermal.CurrentPower > 0 {
-			label := "Draw"
-			if thermal.PowerSource == "charging" {
-				label = "Charge"
-			}
+		if thermal.AdapterPower > 0 && isPoweredByAC(statusLower) {
 			lines = append(lines, fmt.Sprintf("%-6s %s  %6s",
-				label,
-				powerProgressBar(thermal.CurrentPower, thermal.AdapterPower),
-				formatWatts(thermal.CurrentPower),
+				"Input",
+				okStyle.Render(plainProgressBar(100)),
+				fmt.Sprintf("%.0fW max", thermal.AdapterPower),
 			))
 		}
 
@@ -723,36 +719,6 @@ func formatBatteryStatus(status string) string {
 		return "Discharging"
 	}
 	return strings.ToUpper(status[:1]) + strings.ToLower(status[1:])
-}
-
-func formatWatts(watts float64) string {
-	if watts >= 100 {
-		return fmt.Sprintf("%.0fW", watts)
-	}
-	return fmt.Sprintf("%.1fW", watts)
-}
-
-func powerProgressBar(watts float64, adapterPower float64) string {
-	scale := 60.0
-	if adapterPower > scale {
-		scale = adapterPower
-	}
-	percent := 0.0
-	if scale > 0 {
-		percent = watts / scale * 100.0
-	}
-	return colorizePower(watts, plainProgressBar(percent))
-}
-
-func colorizePower(watts float64, input string) string {
-	switch {
-	case watts >= 80:
-		return dangerStyle.Render(input)
-	case watts >= 45:
-		return warnStyle.Render(input)
-	default:
-		return okStyle.Render(input)
-	}
 }
 
 func renderCard(data cardData, width int, height int) string {

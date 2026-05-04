@@ -658,7 +658,7 @@ func TestBatteryProgressBar(t *testing.T) {
 	}
 }
 
-func TestRenderBatteryCardShowsCurrentPowerDraw(t *testing.T) {
+func TestRenderBatteryCardShowsAdapterInputOnly(t *testing.T) {
 	card := renderBatteryCard([]BatteryStatus{{
 		Percent:    80,
 		Status:     "AC",
@@ -667,9 +667,6 @@ func TestRenderBatteryCardShowsCurrentPowerDraw(t *testing.T) {
 	}}, ThermalStatus{
 		BatteryTemp:  30.7,
 		AdapterPower: 94,
-		SystemPower:  19.967,
-		CurrentPower: 19.967,
-		PowerSource:  "system",
 	})
 
 	var joined []string
@@ -678,8 +675,11 @@ func TestRenderBatteryCardShowsCurrentPowerDraw(t *testing.T) {
 	}
 	got := strings.Join(joined, "\n")
 
-	if !strings.Contains(got, "Draw") || !strings.Contains(got, "20.0W") {
-		t.Fatalf("expected draw line with current watts, got:\n%s", got)
+	if !strings.Contains(got, "Input") || !strings.Contains(got, "94W max") {
+		t.Fatalf("expected input line with adapter max watts, got:\n%s", got)
+	}
+	if strings.Contains(got, "Draw") || strings.Contains(got, "Charge") {
+		t.Fatalf("expected no live draw or charge watt row, got:\n%s", got)
 	}
 	if !strings.Contains(got, "AC · 94W adapter") {
 		t.Fatalf("expected AC adapter status, got:\n%s", got)
@@ -689,47 +689,6 @@ func TestRenderBatteryCardShowsCurrentPowerDraw(t *testing.T) {
 	}
 	if strings.Contains(got, "⚡") {
 		t.Fatalf("expected no charging glyph, got:\n%s", got)
-	}
-}
-
-func TestRenderBatteryCardDoesNotShowAdapterInputAsDraw(t *testing.T) {
-	card := renderBatteryCard([]BatteryStatus{{
-		Percent:  80,
-		Status:   "AC",
-		Capacity: 100,
-	}}, ThermalStatus{
-		AdapterPower: 94,
-	})
-
-	got := ""
-	for _, line := range card.lines {
-		got += stripANSI(line) + "\n"
-	}
-	if strings.Contains(got, "Input") || strings.Contains(got, "Draw") || strings.Contains(got, "94W max") {
-		t.Fatalf("expected adapter capacity not to masquerade as live draw, got:\n%s", got)
-	}
-	if strings.Contains(got, "⚡") {
-		t.Fatalf("expected no charging glyph, got:\n%s", got)
-	}
-}
-
-func TestRenderBatteryCardShowsChargingPowerFlow(t *testing.T) {
-	card := renderBatteryCard([]BatteryStatus{{
-		Percent:  42,
-		Status:   "charging",
-		Capacity: 90,
-	}}, ThermalStatus{
-		BatteryPower: -12.345,
-		CurrentPower: 12.345,
-		PowerSource:  "charging",
-	})
-
-	got := ""
-	for _, line := range card.lines {
-		got += stripANSI(line) + "\n"
-	}
-	if !strings.Contains(got, "Charge") || !strings.Contains(got, "12.3W") {
-		t.Fatalf("expected charging watt line, got:\n%s", got)
 	}
 }
 
