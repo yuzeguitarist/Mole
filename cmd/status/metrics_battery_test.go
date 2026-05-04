@@ -56,3 +56,16 @@ func TestParseAppleSmartBatteryThermalDerivesBatteryWattsFromVoltageAndAmperage(
 		t.Fatalf("expected derived battery power 18W, got %v", thermal.BatteryPower)
 	}
 }
+
+func TestParseAppleSmartBatteryThermalIgnoresRawAdapterWatts(t *testing.T) {
+	out := `
+  | |   "AppleRawAdapterDetails" = {"Watts" = 140}
+  | |   "AdapterDetails" = {"Watts" = 96}
+`
+
+	thermal := parseAppleSmartBatteryThermal(out)
+
+	if thermal.AdapterPower != 96 {
+		t.Fatalf("expected normalized adapter power 96W, got %v", thermal.AdapterPower)
+	}
+}

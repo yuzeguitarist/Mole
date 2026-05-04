@@ -228,9 +228,14 @@ func parseAppleSmartBatteryThermal(out string) ThermalStatus {
 			}
 		}
 
-		// Adapter power (Watts) from current adapter.
-		if watts, found := parseIORegFloatValue(line, "Watts"); found && watts > 0 && thermal.AdapterPower == 0 {
-			thermal.AdapterPower = watts
+		// Adapter power (Watts) from current adapter. Ignore AppleRawAdapterDetails:
+		// raw entries can appear before the normalized adapter details and should
+		// not win the display value.
+		if strings.Contains(line, `"AdapterDetails"`) && !strings.Contains(line, "AppleRaw") && thermal.AdapterPower == 0 {
+			watts, found := parseIORegFloatValue(line, "Watts")
+			if found && watts > 0 {
+				thermal.AdapterPower = watts
+			}
 		}
 
 		// System power consumption (mW -> W).
@@ -332,11 +337,11 @@ func parseIORegSignedInteger(raw string) (int64, bool) {
 
 func ioRegValueForKey(line string, key string) (string, bool) {
 	marker := `"` + key + `"`
-	idx := strings.Index(line, marker)
-	if idx == -1 {
+	_, rest, found := strings.Cut(line, marker)
+	if !found {
 		return "", false
 	}
-	rest := strings.TrimLeft(line[idx+len(marker):], " \t")
+	rest = strings.TrimLeft(rest, " \t")
 	if !strings.HasPrefix(rest, "=") {
 		return "", false
 	}
