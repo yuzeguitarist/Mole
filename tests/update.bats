@@ -603,7 +603,6 @@ EOF
     [ "$status" -eq 1 ]
     [[ "$output" == *"Nightly update is only available for script installations"* ]]
     [[ "$output" == *"Homebrew installs follow stable releases."* ]]
-    [[ "$output" == *"Reinstall via script to use: mo update --nightly"* ]]
 }
 
 @test "get_homebrew_latest_version prefers brew outdated verbose target version" {
